@@ -80,9 +80,9 @@ sumtable(TIA_DATA, vars = c('Y', 'X1', 'X2', 'X3', 'X4', 'X5'),
          group = 'D', group.test = TRUE) # currently showing wrong #s
 # show Y(0) and Y(1) for each value of x (how you calculate the differences)
 
-
+##--START--##
 TIA_table <- TIA_DATA %>%
-  mutate(Y = ifelse(D == 1, Y1, Y0)) %>% #Create observed Y variable
+  #mutate(Y = ifelse(D == 1, Y1, Y0)) %>% #Create observed Y variable
   group_by(X, D)%>% 
   summarise(n_obs = n(),
             Y_mean = mean(Y, na.rm = T)) %>% #Calculate number of observations and Y mean by X by treatment cells
@@ -104,6 +104,7 @@ ATE = sum((TIA_table$w_ATE)*(TIA_table$Y_diff))
 ATE
 ATT = sum((TIA_table$w_ATT)*(TIA_table$Y_diff))
 ATT
+##--STOP--##
 
 # MULTIVARIATE MATCHING AS REGRESSION ESTIMATOR
 reg_ate <- lm(formula = Y ~ D + X2 + X3 + X4 + X5, 
