@@ -1,0 +1,237 @@
+---
+title: "EDS241: Assignment 1"
+author: "Clarissa Boyajian"
+date: '`r format(Sys.time(), "%m/%d/%Y")`'
+output: 
+  pdf_document:
+    toc: false
+    number_sections: yes
+header-includes:
+  - \setlength{\parindent}{1em}
+  - \usepackage{float}
+--- 
+  
+``` {r setup, echo = FALSE, message = FALSE, warning = FALSE}
+# set default chunk options
+knitr::opts_chunk$set(fig.width = 4, fig.height = 3, 
+                      echo = TRUE, message = FALSE, warning = FALSE)
+
+# load packages
+packages = c("stargazer", "here", "tidyverse", "janitor", 
+           "cowplot", "tinytex", "datasets", "estimatr", "tibble", "car")
+
+for (i in packages) {
+  if (require(i, character.only = TRUE) == FALSE) {
+    install.packages(i,repos = 'http://cran.us.r-project.org')
+  }
+  else {
+    require(i, character.only = TRUE)
+  }
+}
+
+options(scipen = 10) # not scientific notation
+```
+
+\noindent In this assignment we compare public health and socioeconomic data for all 8,035 census tracts within California. The data are from the California EnviroScreen 4.0 tool, a mapping and data tool produced by the California Office of Environmental Health Hazards Assessment (OEHHA).
+
+# Load and clean data
+
+\noindent The following code loads and cleans the data.
+
+```{r, include=TRUE}
+raw_data <- read.csv(here::here("data", "CES4_0FINAL_results.csv"))
+
+clean_data <- raw_data %>% 
+  clean_names() %>% 
+  select(c("census_tract", "total_population", "california_county", 
+           "low_birth_weight", "pm2_5", "poverty"))
+```
+
+
+# Calculate basic statistics of data
+
+## Average PM2.5 concentration
+
+\noindent The code chunk below calculates the average ambient concentration of PM2.5 across all census tracts in California. 
+
+```{r, include=TRUE}
+average_pm2_5 <- mean(clean_data$pm2_5)
+```
+
+\textbf{a.} The average ambient concentration of PM2.5 throughout all census tracts in California is `r round(average_pm2_5, 6)` micrograms per cubic meter (mg/$m^3$).
+
+
+\newpage
+## Poverty level in California counties
+
+\noindent The code chunk below calculated the California county with the highest level of poverty in two ways.
+
+\begin{itemize}
+\item First, we calculate the county with the highest percentage of its population living at least two times below the federal poverty level. This is done simply for each county by taking the mean of the percentage of poverty for all census tracks in that county.
+\item Second, we calculate the county with the largest number of people living two times below the federal poverty level. This is done by summing the total population of all census tracts within each county and finding the average percentage of poverty for each county. These calculations are then multiplied to find the total number of people in each county living in poverty.
+\end{itemize}
+
+```{r}
+# county with highest % poverty
+county_average_poverty <- clean_data %>% 
+  group_by(california_county) %>% 
+  summarise(county_average_poverty = mean(poverty, na.rm = TRUE))
+
+county_average_poverty_highest <- 
+  filter(county_average_poverty, county_average_poverty == max(county_average_poverty))
+
+# county with most people in poverty
+total_state_population <- sum(clean_data$total_population)
+
+county_population_poverty <- clean_data %>% 
+  group_by(california_county) %>% 
+  summarise(total_county_population = sum(total_population, na.rm = TRUE),
+            county_average_poverty_percent = mean(poverty, na.rm = TRUE), 
+            total_county_population_poverty = 
+              total_county_population * (county_average_poverty_percent / 100))
+
+county_most_impoverished <- 
+  filter(county_population_poverty, 
+         total_county_population_poverty == max(total_county_population_poverty))
+```
+
+\textbf{b.} The county with the highest average percentage of poverty is `r county_average_poverty_highest[1]` County with `r round(county_average_poverty_highest[2], 2)`% of the population living at least below two times the federal poverty level. The county with the highest number of people living in poverty is `r county_most_impoverished[1]` with `r round(county_most_impoverished[4], 0)` people living at least two times below the federal poverty level.  
+
+## Low birth weight and PM2.5 distribution
+
+\noindent The code chunk below shows how to produce a histogram of low birth weight percentages.
+
+```{r}
+plot_low_birth_weight <- ggplot(clean_data, aes(x = low_birth_weight)) +
+  geom_histogram() +
+  theme_minimal() +
+  labs(x = "Rate of low birth weights \n(below 2,500 grams)",
+       y = "")
+```
+
+
+\newpage
+<center>**Figure 1: Histogram of CA Census Tract Low Birth Weight Percentages**</center>
+```{r , fig.width = 4, fig.height = 3, eval=TRUE, echo=FALSE}
+plot_low_birth_weight
+```
+
+\textbf{c.} Figure 1 shows a histogram of the rate of births with weight less than 2,500 grams in all California census tracts. We can see that ~5% is the most common percentage of low birth weights throughout California census tracts.
+
+\noindent The code chunk below shows how to produce a histogram of average ambient PM2.5 concentration levels.
+
+```{r}
+plot_pm2_5 <- ggplot(clean_data, aes(x = pm2_5)) +
+  geom_histogram() +
+  theme_minimal() +
+  labs(x = "PM2.5 Concentration \n(micrograms per cubic meter)",
+       y = "")
+```
+
+<center>**Figure 2: Histogram of Average PM2.5 Concentration within CA Census Tracts**</center>
+```{r , fig.width = 4, fig.height = 3, eval=TRUE, echo=FALSE}
+plot_pm2_5
+```
+
+\newpage
+\textbf{c.} Figure 2 shows a histogram of the average ambient concentration of PM2.5 in all California census tracts. We can see that ~12 mg/$m^3$ is the most common concentration level with a second peak showing ~8.5 mg/$m^3$ as the second most common concentration level.
+
+# Run and interpret regression models
+
+## Impact of PM2.5 on birth weight
+
+\noindent To analyze the relationship between the percentage of low birth rates and the average concentration of PM2.5 we estimate the following regression: 
+
+\begin{align}
+  Y_{i} = \beta_0 + \beta_1 X_{1i} + u_{i}
+\end{align}
+
+\noindent where $Y_{i}$ is the rate of births with low weight (below 2,500g) for each census tract $i$, $X_{1i}$ is the average PM2.5 concentration measured in micrograms per $m^3$, and $u_{i}$ is the regression error term.
+
+\noindent The code chunks below calculates the linear regression stated above in equation (1).
+
+```{r}
+# estimate coefficients (inline reference)
+model_d_robust <- lm_robust(formula = low_birth_weight ~ pm2_5, data = clean_data)
+
+## for use in `stargazer` table:
+# get coefficients
+model_d <- lm(formula = low_birth_weight ~ pm2_5, data = clean_data)
+# get robust standard error
+se_model_d <- starprep(model_d)
+```
+
+```{r, results='asis', include=TRUE}
+stargazer(model_d, se = se_model_d,
+          type = "latex", ci = FALSE, no.space = TRUE,
+          header = FALSE, omit = c("Constant"), 
+          omit.stat = c("adj.rsq", "ser", "f"),
+          covariate.labels = c("PM2.5"), 
+          dep.var.labels = c("Low Birth Weight"),
+          dep.var.caption = c(""), 
+          notes = c("Robust standard errors paranthese."),
+          title = "PM2.5 and Low Birth Weight", 
+          table.placement = "H")
+```
+
+
+\newpage
+\textbf{d.} Table 1 shows the estimated slope coefficient ($\hat{\beta_1}$) is `r round(model_d_robust$coefficients[2], 4)` and the heteroskedasticity-robust standard error is `r round(model_d_robust$std.error[2], 4)`. We can interpret $\hat{\beta_1}$ to indicate that for each 1 mg/$m^3$ increase in PM2.5 concentration within a census tract, the percentage of births that are considered to be low weight increases by `r round(model_d_robust$coefficients[2], 4) * 100`%. The effect of PM2.5 on low birth rates is statistically significant at the 1%.
+
+
+## Impact of PM2.5 and poverty on birth weight
+
+\noindent To analyze the relationship between the rate of low birth rates, the average concentration of PM2.5, and poverty we estimate the following regression: 
+
+\begin{align}
+  Y_{i} = \beta_0 + \beta_1 X_{1i} + \beta_2 X_{2i} + u_{i}
+\end{align}
+
+\noindent where $Y_{i}$ is the percentage of births with low weight (below 2,500g) for each census tract $i$, $X_{1i}$ is PM2.5 concentration, $X_{2i}$ is average percentage of the population living at least two times below the federal poverty level, and $u_{i}$ is the regression error term.
+
+\noindent The code chunks below calculates the linear regression stated above in Equation 2.
+
+```{r}
+# estimate coefficients (inline reference)
+model_f_robust <- lm_robust(formula = low_birth_weight ~ pm2_5 + poverty, data = clean_data)
+
+## for use in `stargazer` table:
+# get coefficients
+model_f <- lm(formula = low_birth_weight ~ pm2_5 + poverty, data = clean_data)
+# get robust standard error
+se_model_f <- starprep(model_f)
+```
+
+```{r, results='asis', include=TRUE}
+stargazer(model_f, se = se_model_f,
+          type = "latex", ci = FALSE, no.space = TRUE,
+          header = FALSE, omit = c("Constant"), 
+          omit.stat = c("adj.rsq", "ser", "f"),
+          covariate.labels = c("PM2.5", "Poverty"), 
+          dep.var.labels = c("Low Birth Rate"),
+          dep.var.caption = c(""), 
+          notes = c("Robust standard errors paranthese."),
+          title = "PM2.5, Poverty, and Low Birth Weight", 
+          table.placement = "H")
+```
+
+
+\newpage
+\textbf{f.} Table 2 shows the estimated coefficient ($\hat{\beta_2}$) of poverty as `r round(model_f_robust$coefficients[3], 4)`. This means that if you hold PM2.5 concentration constant, a 1% increase in poverty within a census tract will results in the rate of low birth weights to increase by `r (round(model_f_robust$coefficients[2], 4) + round(model_f_robust$coefficients[2], 4)) * 100`%. The estimated coefficient on PM2.5 is roughly half of what it was in the previous regression (question d). $\hat{\beta_2}$ is now `r round(model_f_robust$coefficients[2], 4)` as compared to previously being `r round(model_d_robust$coefficients[2], 4)`. This is unsurprising as there is likely a correlation between poverty and one's likelihood of living in a census tract with high PM2.5 concentration. Therefore, the first model did not predict the estimated coefficient of PM2.5 accurately because $u_{i}$ was correlated with the PM2.5 regressor (aka the first least squared assumption was violated).
+
+
+# Null hypothesis test
+
+\noindent The code chunk below tests the null hypothesis that the effect of PM2.5 concentration is equal to the effect of the rate of poverty on the rate of low birth weights within a given census tract. 
+
+```{r}
+model_hyp_test <- car::linearHypothesis(model = model_f_robust,
+                                   c("pm2_5 = poverty"),
+                                   white.adjust = "hc2")
+pr_chisq <- model_hyp_test$`Pr(>Chisq)`[2]
+```
+
+\textbf{g.} Based on the joint hypothesis test above, we can reject the null hypothesis that the effects of PM2.5 concentration and poverty are equal because the p-value is `r round(pr_chisq, 4)`. This is statistically significant at 0.01%.
+
+
+

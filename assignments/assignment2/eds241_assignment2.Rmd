@@ -1,0 +1,199 @@
+---
+title: "EDS241: Assignment2"
+author: "Clarissa Boyajian"
+date: '`r format(Sys.time(), "%m/%d/%Y")`'
+output: 
+  pdf_document:
+    toc: false
+    number_sections: yes
+header-includes:
+  - \setlength{\parindent}{1em}
+  - \usepackage{float}
+--- 
+  
+``` {r setup, echo = FALSE, message = FALSE, warning = FALSE}
+# set default chunk options
+knitr::opts_chunk$set(fig.width = 4, fig.height = 3, 
+                      echo = TRUE, message = FALSE, warning = FALSE)
+
+# load packages
+packages = c("stargazer", "here", "tidyverse", "janitor", 
+           "cowplot", "tinytex", "datasets", "estimatr", "tibble", "car", "readxl")
+
+for (i in packages) {
+  if (require(i, character.only = TRUE) == FALSE) {
+    install.packages(i,repos = 'http://cran.us.r-project.org')
+  }
+  else {
+    require(i, character.only = TRUE)
+  }
+}
+
+options(scipen = 10) # not scientific notation
+```
+
+
+\noindent In this assignment we assess whether the effects of air quality regulations are the same across locations with different racial mix. To do this I will test if the NOx Budget Program (NBP), a cap-and-trade market for nitrogen oxides (NOx) emissions from power plants, lead to similar effects in counties that are predominantly white versus counties that are predominantly African American. Data used for this assignment come from Olivier Deschenes' paper title "Defensive Investments and the Demand for Air Quality: Evidence from the NOx Budget Program."
+
+# Load and clean data
+
+\noindent The following code loads and cleans the data.
+
+```{r, include=TRUE}
+data_NOXprogram <- read_excel("data/NBP.xls") %>% 
+  clean_names()
+```
+
+
+# Visualize data
+
+\noindent The code chunk below creates a histogram depicting the distribution of `Dnox_masstons`, the change in NOx emissions from all power plants in a county between 2000 and 2008 (in tons).
+
+```{r, include=TRUE}
+dnox_plot <- ggplot(data_NOXprogram) +
+  geom_histogram(aes(x = dnox_masstons)) +
+  theme_classic() +
+  labs(y = "",
+       x = "Change in Annual NOx emissions per county \n(in tons)")
+```
+
+\newpage
+<center>**Figure 1: Histogram of the change in annual NOx emissions between 2000-2008**</center>
+```{r , fig.width = 4, fig.height = 3, eval=TRUE, echo=FALSE}
+dnox_plot
+```
+
+\noindent \textbf{a.} Figure 1 shows a histogram of the change in annual NOx emissions from all power plants in a county between 2000 and 2008 (in tons) for all counties.
+
+
+# Create variable 'D'
+
+\noindent The code chunk below adds a column to the data with value 0 for counties that are predominantly African American (aka the percentage of their population that is African American is less than the median) and 1 for counties that are predominantly African American. 
+
+```{r}
+median_pct_black <- median(data_NOXprogram$pct_black)
+
+data_NOXprogram <- data_NOXprogram %>% 
+  mutate(D = case_when(pct_black > median_pct_black ~ 1,
+                       pct_black <= median_pct_black ~ 0))
+
+D_above_median <- data_NOXprogram %>% filter(D == "1")
+mean_pct_black_above_median <- mean(D_above_median$pct_black)
+  
+```
+
+\noindent \textbf{b.} The median percentage of African American residents for counties in this dataste is `r round(median_pct_black, 2)`%. Counties that are above the median have an average of `r round(mean_pct_black_above_median, 2)`% of the population that is African American. 
+
+\noindent \emph{Note}: Moving forwards I will refer to counties that are above the median as "predominantly black" even though I recognize that `r round(median_pct_black, 2)`% African American does not necessarily mean the county's population is actually predominantly African American. 
+
+
+# Run regressions
+
+## Dnox  on NBP
+
+\noindent To analyze the relationship between the average change in annual NOx emmissions from all power plants in a county between 2000 and 2008 and the binary variable of whether a county was regulated by the NOx Budget Program (NBP) or not we estimate the following regression: 
+
+\begin{align}
+  Y_{i} = \beta_0 + \beta_1 D_{1i} + u_{i}
+\end{align}
+
+\noindent where $Y_{i}$ is the average rate of change in annual NOx emissions from all power plants in a county ($i$) between 2000 and 2008 (in tons), $D_{1i}$ is a binary variable of whether a county was regulated by NBP, and $u_{i}$ is the regression error term.
+
+\noindent The code chunk below calculates a linear regression of the above equation.
+
+```{r}
+# robust regression (inline reference)
+model1_robust <- lm_robust(data = data_NOXprogram,
+                           formula = dnox_masstons ~ nbp)
+
+# for stargazer table
+model1 <- lm(data = data_NOXprogram, formula = dnox_masstons ~ nbp)
+se_model1 <- starprep(model1)
+```
+
+```{r, results='asis', include=TRUE, echo=FALSE}
+stargazer(model1, se = se_model1,
+          type = "latex", ci = FALSE, no.space = TRUE,
+          header = FALSE,
+          omit.stat = c("adj.rsq", "ser", "f"),
+          covariate.labels = c("Regulated by NBP", "Unregulated by NBP"),
+          dep.var.labels = c("Change in NOx emissions (in tons)"),
+          dep.var.caption = c(""),
+          notes = c("Robust standard errors parentheses."),
+          title = "Impact of NBP program on Change in Annual NOx",
+          table.placement = "H")
+```
+
+\noindent \textbf{c.} Table 1 shows the estimated intercept ($\hat{\beta_0}$) is `r round(model1_robust$coefficients[1], 2)` and the coefficient of NBP ($\hat{\beta_1}$) is `r round(model1_robust$coefficients[2], 2)`. We can interpret $\hat{\beta_0}$ to indicate that the average change from 2000 to 2008 in annual NOx emissions from all power plants within a given county that was unregulated by the NBP program was a decrease of `r abs(round(model1_robust$coefficients[1], 2))` tons. We can interpret $\hat{\beta_1}$ as the difference in the average change from 2000 to 2008 in a county's annual NOx emissions between counties regulated vs. unregulate by NBP. So the difference in the average change in annual NOx emissions was a decrease of `r abs(round(model1_robust$coefficients[2], 2))` tons for regulated counties vs. unregulated counties.
+
+
+## Interaction regression
+
+\noindent To analyze the relationship between the binary variable of whether a county was regulated by NBP, the average change in annual NOx emmissions from all power plants in a county between 2000 and 2008, whether a counties was predominantly white or black, and the interaction between NBP and racial demographics we estimate the following regression: 
+
+\begin{align}
+  Y_{i} = \beta_0 + \beta_1 D_{1i} + \beta_2 D_{2i} + \beta_{3i} D_{3i} + u_{i}
+\end{align}
+
+\noindent where $Y_{i}$ is the average rate of change in annual NOx emissions from all power plants in a county ($i$) between 2000 and 2008 (in tons), $D_{1i}$ is a binary variable of whether a county was regulated or unregulated by NBP, $D_{2i}$ is a binary variable of whether a county was predominantly white or black, $D_{3i}$ is the interaction between the two binary variables, and $u_{i}$ is the regression error term.
+
+\newpage
+\noindent The code chunk below creates an interaction between the binary variables `NBP` and `D` and runs a linear regression on the interaction.
+
+```{r}
+# for inline code
+model2_robust <- lm_robust(data = data_NOXprogram, 
+                           formula = dnox_masstons ~ nbp + D + nbp:D)
+# for stargazer table
+model2 <- lm(data = data_NOXprogram, 
+             formula = dnox_masstons ~ nbp + D + nbp:D)
+se_model2 <- starprep(model2)
+```
+
+```{r, results='asis', include=TRUE, echo=FALSE}
+stargazer(model2, se = se_model2,
+          type = "latex", ci = FALSE, no.space = TRUE,
+          header = FALSE,
+          omit.stat = c("adj.rsq", "ser", "f"),
+          covariate.labels = c("Regulated by NBP and predominantly white", 
+                               "Unregulated by NBP and predominantly African American",
+                               "Regulated by NBP and predominantly African American",
+                               "Unregulated by NBP and predominantly white"),
+          dep.var.labels = c("Change in NOx (in tons)"),
+          dep.var.caption = c(""),
+          notes = c("Robust standard errors parentheses."),
+          title = "Impact of NBP program on Change in Annual NOx",
+          table.placement = "H")
+```
+
+\noindent \textbf{d.} Table 2 tells us that the average change ($\hat{\beta_0}$) from 2000 to 2008 in annual NOx emissions from all power plants within a given county that was unregulated by NBP and is predominantly white was `r round(model2$coefficients[1], 2)` tons. The percent difference ($\hat{\beta_1}$) in the average change in annual NOx emissions (from all power plants in a county from 2000 to 2008) between unregulated and regulated counties that are predominantly white was `r round(model2$coefficients[2], 2)` tons. The percent difference ($\hat{\beta_2}$) in the average change in annual NOx emissions (from all power plants in a county from 2000 to 2008) between predominantly white and predominantly black counties that were unregulated by NBP was `r round(model2$coefficients[3], 2)` tons. And finally, the percent difference ($\hat{\beta_3}$) in the average change in annual NOx emissions (from all power plants in a county from 2000 to 2008) between regulated and unregulated counties that are predominantly black was `r round(model2$coefficients[4], 2)` tons.
+
+\noindent This means that the average change from 2000 to 2008 of NOx emissions from all power plants within a county was as follows:
+\begin{itemize}
+\item Counties that were unregulated by NBP and predominantly white saw a change of `r round(model2$coefficients[1], 2)` tons.
+\item Counties that were regulated by NBP and predominantly white saw a change of `r round((model2$coefficients[1] + model2$coefficients[2]), 2)` tons.
+\item Counties that were unregulated by NBP and predominantly black saw a change of `r round((model2$coefficients[1] + model2$coefficients[3]), 2)` tons. 
+\item Counties that were regulated by NBP and predominantly black saw a change of `r round((model2$coefficients[1] + model2$coefficients[2] + model2$coefficients[3] + model2$coefficients[4]), 2)` tons.
+\end{itemize}
+
+\newpage
+## Impact of Policy
+
+\noindent The code chunk below predicts the average change in 
+
+(e) What is the predicted Dnox_masstons in a county that was not regulated under NBP and
+where PctBlack is above the sample median (i.e., where D=1)? Report the 95% confidence
+interval for this prediction. Make sure to use “heteroskedasticity-robust” standard errors.
+
+```{r}
+pred_dnox <- data.frame(nbp = c(0), D = c(1))
+
+ci <- predict(object = model1_robust,
+              newdata = pred_dnox,
+              se.fit = TRUE,
+              interval = "confidence")
+```
+
+\noindent \textbf{e.} We are 95% confident that the predicted average change from 2000 to 2008 in annual NOx emissions from all power plants in a county for counties that were unregulated and predominantly black will be within the range (`r round(ci$fit[2], 2)`, `r round(ci$fit[3], 2)`) of tons.
+
+

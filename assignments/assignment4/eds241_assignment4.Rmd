@@ -1,0 +1,152 @@
+---
+title: "EDS241: Assignment 4"
+author: "Clarissa Boyajian"
+date: '`r format(Sys.time(), "%m/%d/%Y")`'
+output: 
+  pdf_document:
+    toc: false
+    number_sections: yes
+header-includes:
+  - \setlength{\parindent}{1em}
+  - \usepackage{float}
+--- 
+  
+``` {r setup, echo = FALSE, message = FALSE, warning = FALSE}
+# set default chunk options
+knitr::opts_chunk$set(fig.width = 4, fig.height = 3, 
+                      echo = TRUE, message = FALSE, warning = FALSE)
+
+# load packages
+packages = c("stargazer", "here", "tidyverse", "janitor", 
+           "cowplot", "tinytex", "datasets", "estimatr", "tibble", "car", 
+           "readxl", "huxtable", "AER", "knitr")
+
+for (i in packages) {
+  if (require(i, character.only = TRUE) == FALSE) {
+    install.packages(i,repos = 'http://cran.us.r-project.org')
+  }
+  else {
+    require(i, character.only = TRUE)
+  }
+}
+
+options(scipen = 999) # not scientific notation
+```
+
+# Assignment 4
+
+\noindent In this assignment we are estimating the price elasticity of demand for fresh sardines across 56 ports located in 4 European countries with monthly data from 2013 to 2019. 
+
+## Load and clean data
+
+\noindent The following code loads and cleans the data and adds a column of `log()` values of the price and volume sold of sardines.
+
+```{r}
+data_sardines <- read.csv("data/EU_sardines.csv") %>% 
+  clean_names() %>% 
+  mutate(log_price_euro_kg = log(price_euro_kg),
+         log_volume_sold_kg = log(volume_sold_kg))
+```
+
+
+## Question A
+\noindent Estimate a bivariate regression of `log(volume_sold_kg)` on `log(price euro_kg)`. What is the price elasticity of demand for sardines? Test the null hypothesis that the price elasticity is equal to -1.
+
+\noindent The code chunk below runs a bivariate regression of `log(volume_sold_kg)` on `log(price euro_kg)`:
+
+```{r}
+model_1 <- lm_robust(data = data_sardines,
+                     log_volume_sold_kg ~ log_price_euro_kg)
+
+
+model_1_table <- tidy(model_1) %>% 
+  select(term, estimate, std.error, p.value, conf.low, conf.high) %>% 
+  kable()
+
+model_1_table
+```
+
+\noindent \textbf{a.} The estimated price elasticity of demand for sardines regressing log volume on log price is `r round(model_1[[1]][[2]], 2)`. We can say with 95% confidence that the intervals of `r round(model_1$conf.low[[2]], 2)` to `r round(model_1$conf.high[[2]], 2)` contains the true $\beta_1$ (aka price elasticity). Because this range does not include -1, we can reject the null hypothesis that the price elasticity is equal to -1.
+
+
+## Question B
+\noindent Like in Lecture 8 (see the IV.R script), we will use wind_m_s as an instrument for `log(price_euro_kg)`. To begin, estimate the first-stage regression relating `log(price_euro_kg)` to `wind_m_s.` Interpret the estimated coefficient on wind speed. Does it have the expected sign? Also test for the relevance of the instrument and whether it is a “weak” instrument by reporting the proper F-statistic. 
+
+\noindent The code chunk below estimates the first-stage regression relating `log_price_euro_kg` to `wind_m_s`:
+
+```{r}
+# first stage regression
+model_2 <- lm_robust(data = data_sardines,
+                     log_price_euro_kg ~ wind_m_s)
+
+huxreg("log_price_euro_kg" = model_2)
+```
+
+\noindent The code chunk below calculates the proper F-statistic:
+
+```{r}
+model_2_fstat <- linearHypothesis(model_2, c("wind_m_s = 0"), 
+                                  white.adjust = "hc2")
+
+huxtable(model_2_fstat)
+```
+
+\noindent \textbf{b.} The estimated coefficient on wind speed is `r round(model_2[[1]][2], 4)`, meaning that for 1 meter per second increase in wind speed there is an increase of `r round(model_2[[1]][2], 4)` in the log price of sardines. The sign is positive, which we would expect because higher wind speeds may lead to a lower total supply of sardines for a given day. Because wind speed doesn't effect the demand for sardines, the log price goes up when supply decreases but the demand stays the same. The F-statistic is equal to `r round(model_2_fstat[[3]][2], 2)`, which is greater than 10. This means that our instrument (wind speed) is not weak.
+
+\newpage
+
+## Question C
+\noindent Estimate the TSLS estimator of the price elasticity of demand for sardines using `wind_m_s` as an instrument for `log(price_euro_kg)`. What is the estimated price elasticity of demand for sardines?
+
+\noindent The code chunk below estimates the TSLS estimator of the price elasticity of demand for sardines using `wind_m_s` as an instrument for `log_price_euro_kg`:
+
+```{r}
+TSLS_1 <- ivreg(data = data_sardines,
+                log_volume_sold_kg ~ log_price_euro_kg | wind_m_s)
+
+huxreg("log_volume_sold_kg" = TSLS_1)
+```
+
+\noindent \textbf{c.} The estimated price elasticity of demand for sardines using wind as an instrument of log price is `r round(TSLS_1[[1]][[2]], 2)`.
+
+## Question D
+\noindent Repeat the exercise in (c), but include fixed effects for each year, month, and country. Report the estimated price elasticity of demand and the F-statistic testing for relevant and non-weak instruments.
+
+\noindent The code chunk below The code chunk below estimates the TSLS estimator of the price elasticity of demand for sardines using `wind_m_s` as an instrument for `log_price_euro_kg` including a fixed effects for each year, month, and country:
+
+```{r}
+TSLS_2 <- ivreg(data = data_sardines,
+                log_volume_sold_kg ~ log_price_euro_kg + as.factor(country) + 
+                  as.factor(year) + as.factor(month) | 
+                  as.factor(country) + as.factor(year) + 
+                  as.factor(month) + wind_m_s)
+
+TSLS_2_huxreg <- huxreg(TSLS_2)
+```
+
+\newpage 
+
+```{r}
+restack_across(TSLS_2_huxreg, 21)
+```
+
+\newpage
+
+\noindent The code chunk below calculates the proper F-statistic:
+
+```{r}
+# calculate F-statistic
+model_3 <- lm_robust(data = data_sardines,
+                     log_price_euro_kg ~ wind_m_s + as.factor(country) + 
+                       as.factor(year) + as.factor(month))
+
+model_3_fstat <- linearHypothesis(model_3, c("wind_m_s = 0"), 
+                                  white.adjust = "hc2")
+huxtable(model_3_fstat)
+```
+
+\noindent \textbf{d.} The estimated price elasticity of demand for sardines using wind as an instrument of log_price and including fixed effects for each year, month, and country is `r round(TSLS_2[[1]][[2]], 2)` and the F-statistic for the instrument of windspeed is `r round(model_3_fstat[[3]][2], 2)`. 
+
+
+
+

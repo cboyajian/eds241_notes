@@ -1,0 +1,207 @@
+---
+title: "EDS241: Assignment 3"
+author: "Clarissa Boyajian"
+date: '`r format(Sys.time(), "%m/%d/%Y")`'
+output: 
+  pdf_document:
+    toc: false
+    number_sections: yes
+header-includes:
+  - \setlength{\parindent}{1em}
+  - \usepackage{float}
+--- 
+  
+``` {r setup, echo = FALSE, message = FALSE, warning = FALSE}
+# set default chunk options
+knitr::opts_chunk$set(fig.width = 4, fig.height = 3, 
+                      echo = TRUE, message = FALSE, warning = FALSE)
+
+# load packages
+packages = c("stargazer", "here", "tidyverse", "janitor", 
+           "cowplot", "tinytex", "datasets", "estimatr", "tibble", "car", 
+           "readxl", "huxtable")
+
+for (i in packages) {
+  if (require(i, character.only = TRUE) == FALSE) {
+    install.packages(i,repos = 'http://cran.us.r-project.org')
+  }
+  else {
+    require(i, character.only = TRUE)
+  }
+}
+
+options(scipen = 999) # not scientific notation
+```
+
+
+\noindent In this assignment we estimate the causal effect of maternal smoking during pregnancy on infant birth weight using the treatment ignorability assumptions. Data come from the National Natality Detail Files and are a random sample of all births in Pennsylvania during 1989-1991, with each observation being a mother-infant pair. 
+
+# Load and clean data
+
+\noindent The following code loads and cleans the data.
+
+```{r}
+data_smoking <- read.csv("data/SMOKING_EDS241.csv") %>% 
+  clean_names()
+```
+
+
+# Unadjusted mean difference of birth weights
+
+\noindent The code chunk below runs a simple linear regression of birth weights on the binary variable of whether the mother was a smoker or nonsmoker.
+
+```{r}
+model_1.1 <- lm_robust(data = data_smoking,
+                       birthwgt ~ tobacco)
+
+huxreg("Birth Weight" = model_1.1)
+```
+
+\noindent The code chunk below runs a simple linear regression of mothers' education on the binary variable of whether the mother was a smoker or nonsmoker.
+
+```{r}
+model_1.2 <- lm_robust(data = data_smoking,
+                       meduc ~ tobacco)
+
+model_1.3 <- lm_robust(data = data_smoking,
+                       mage ~ tobacco)
+
+huxreg("Education" = model_1.2, "Age" = model_1.3)
+```
+
+
+\noindent \textbf{a.} The average un-adjusted mean difference in birth weight of infants with smoking and nonsmoking mothers is a decrease of `r abs(round(model_1.1[[1]][[2]], 2))` grams. This estimate only holds if smoking status is random assigned between mothers unconditional on the other covariates. This is likely not true, as we know that whether someone smokes or not is impacted by their environment. To check whether tobacco usage is correlated with a mother's level of education or her age, I ran two simple linear regressions. The first regressed mother's education on tobacco, and showed a statistically significant different of `r round(model_1.2[[1]][[2]], 2)`. The second regressed mother's age on tobacco, and showed a statistically significant different of `r round(model_1.3[[1]][[2]], 2)`. 
+
+
+# Ddjusted mean difference of birth weights
+
+## Linear regression
+
+\noindent The code chunk below runs a simple linear regression of birth weights on the binary variable of whether the mother was a smoker or nonsmoker, holding other covariates constant.
+
+```{r}
+model_2 <- 
+  lm_robust(data = data_smoking,
+            birthwgt ~ tobacco + anemia + diabete + 
+              alcohol + mblack + first + mage + meduc)
+
+huxtable_model_2 <- huxreg("Birthweight" = model_2)
+```
+
+\newpage
+
+```{r, echo=FALSE}
+restack_across(huxtable_model_2, rows = 9)
+```
+
+
+\noindent \textbf{b.} The average effect of maternal smoking on birth weight when all other covariates are held equal is a decrease of `r abs(round(model_2[[1]][[2]], 2))` grams. The robust standard error is `r round(model_2[[2]][[2]], 2)`.
+
+
+## Exact matching estimator
+
+\noindent The code chunk below creates a new dataframe that transforms into binary indicators mother's age (=1 if `mage` >= 34) and level of education (=1 if `meduc` >= 16). This code chunk also creates a column tracking which of the four dummy variables (age, education, alcohol, and race) are turned on for each observation. 
+
+```{r}
+data_smoking_binary <- 
+  data_smoking %>% 
+  mutate(mage = case_when(mage >= 34 ~ 1,
+                          mage < 34 ~ 0),
+         meduc = case_when(meduc >= 16 ~ 1,
+                           meduc < 16 ~ 0),
+         covariates = paste0(alcohol, mblack, mage, meduc))
+```
+
+\noindent The code chunk below calculates the ATE of smoking on birth weight using the exact matching estimator. 
+
+```{r}
+ATE_table <- data_smoking_binary %>%
+  group_by(covariates, tobacco) %>% 
+  # calculate number of observations
+  summarise(n_obs = n(), 
+            # calculate birthwgt mean by X by treatment cells
+            birthwgt_mean = mean(birthwgt, na.rm = TRUE)) %>% 
+  # reshape the dataframe
+  gather(variables, values, n_obs:birthwgt_mean) %>%
+  # combine the treatment and variables for reshaping
+  mutate(variables = paste0(variables, "_", tobacco, sep = "")) %>%
+  # reshape data by treatment and X cell
+  pivot_wider(id_cols = covariates, 
+              names_from = variables, 
+              values_from = values) %>% 
+  ungroup() %>%  
+  # calculate birthwgt_diff
+  mutate(birthwgt_diff = birthwgt_mean_1 - birthwgt_mean_0, 
+         # calculate ATE weights
+         w_ATE = (n_obs_0 + n_obs_1) / (sum(n_obs_0) + sum(n_obs_1)), 
+         # calculate ATT weights
+         w_ATT = n_obs_1 / sum(n_obs_1)) %>% 
+  mutate_if(is.numeric, round, 2)
+
+huxtable(ATE_table)
+```
+
+```{r}
+# Exact matching estimator ATE
+ATE = sum((ATE_table$w_ATE) * (ATE_table$birthwgt_diff))
+```
+
+\noindent The code chunk below calculates the ATE of smoking on birth weight using the exact matching estimator's linear regression analogue.
+
+```{r}
+## linear regression aspect
+model_3 <- 
+  lm_robust(data = data_smoking_binary,
+            birthwgt ~ tobacco + as.factor(covariates))
+
+huxtable_model_3 <- huxreg("Birth weight" = model_3)
+```
+
+```{r, echo=FALSE}
+restack_across(huxtable_model_3, 21)
+```
+
+
+\noindent \textbf{c.} Using the exact matching estimator, the average effect of maternal smoking on birth weight is a decrease of `r abs(ATE)` grams. Using the linear regression analogue, the average effect of maternal smoking on birth weight is a decrease of `r abs(round(model_3[[1]][[2]], 2))` grams.
+
+
+## Propensity score
+
+\noindent The code chunk below estimates the propensity score for maternal smoking using a logit estimator and includes the following covariables: mother’s age, mother’s age squared, mother’s education, and indicators for mother’s race, and alcohol consumption.
+
+```{r}
+# calculate `mage^2`
+data_smoking_propensity <- 
+  data_smoking %>% 
+  mutate(mage_2 = mage*mage)
+
+# ESTIMATE PROPENSITY SCORE MODEL AND PREDICT (EPS)
+ps_mode_l <- glm(tobacco ~ mage + mage_2 + meduc + mblack + alcohol, 
+                 family = binomial(), 
+                 data = data_smoking_propensity)
+# create new variable
+EPS <- predict(ps_mode_l, type = "response") 
+# propensity-score
+PS_WGT <- (data_smoking_propensity$tobacco / EPS) + 
+  ((1 - data_smoking_propensity$tobacco) / (1 - EPS)) 
+```
+
+\noindent \textbf{d.} The above code chunk calculates a table of estimate propensity scores that will be used below to run a weighted regression to estimate the
+
+\noindent The code chunk below uses the propensity score weighted regression (WLS) to estimate the effect of maternal smoking on birth weight. 
+
+```{r}
+wls1 <- lm(data = data_smoking_propensity,
+           birthwgt ~ tobacco + mage + mage_2 + meduc + mblack + alcohol,
+           weights = PS_WGT)
+
+huxtable_wls1 <- huxreg("Birth Weight" = wls1)
+```
+
+\noindent \textbf{e.} The estimated effect of maternal smoking on birth weight using the propensity score is a decrease of `r abs(round(wls1[[1]][[2]], 2))` grams.
+
+```{r}
+restack_across(huxtable_wls1, 11)
+```
+
+
